@@ -3,26 +3,31 @@ from flask_cors import CORS
 import cv2
 import numpy as np
 import base64
+from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)
 
-# OpenCV built-in cascades
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades +
-    "haarcascade_frontalface_default.xml"
+BASE_DIR = Path(__file__).resolve().parent
+
+MODEL_PATH = str(
+    BASE_DIR / "face_detection_yunet_2023mar.onnx"
 )
 
-eye_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades +
-    "haarcascade_eye.xml"
+# YuNet face detector
+face_detector = cv2.FaceDetectorYN.create(
+    MODEL_PATH,
+    "",
+    (320, 320),
+    0.6,
+    0.3,
+    5000
 )
 
-if face_cascade.empty():
-    raise RuntimeError("Face cascade could not be loaded")
-
-if eye_cascade.empty():
-    raise RuntimeError("Eye cascade could not be loaded")
+if face_detector is None:
+    raise RuntimeError(
+        "YuNet face detector could not be loaded"
+    )
 
 
 def image_to_base64(image):
@@ -45,7 +50,7 @@ def home():
 
     return jsonify({
         "status": "running",
-        "message": "OpenCV Image Analyzer API"
+        "message": "OpenCV YuNet Image Analyzer API"
     })
 
 
@@ -78,121 +83,174 @@ def analyze():
             "error": "Could not read image"
         }), 400
 
-    gray = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2GRAY
+    height, width = image.shape[:2]
+
+    # Tell YuNet the actual image size
+    face_detector.setInputSize(
+        (width, height)
     )
 
-    # Detect faces
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.05,
-        minNeighbors=4,
-        minSize=(25, 25)
+    _, detections = face_detector.detect(
+        image
     )
 
-    faces_detected = len(faces)
-
+    faces_detected = 0
     eyes_detected = 0
 
-    # Process every detected face
-    for (x, y, w, h) in faces:
+    if detections is not None:
 
-        # Face rectangle
-        cv2.rectangle(
-            image,
-            (x, y),
-            (x + w, y + h),
-            (0, 255, 0),
-            2
-        )
+        for detection in detections:
 
-        # ------------------------------------------------
-        # IMPORTANT:
-        # Search only the upper part of the face.
-        # This prevents nose/mouth/cheek detections.
-        # ------------------------------------------------
-
-        upper_height = int(h * 0.58)
-
-        face_gray = gray[
-            y:y + upper_height,
-            x:x + w
-        ]
-
-        if face_gray.size == 0:
-            continue
-
-        # Enlarge small faces
-        scale = 4
-
-        enlarged = cv2.resize(
-            face_gray,
-            None,
-            fx=scale,
-            fy=scale,
-            interpolation=cv2.INTER_CUBIC
-        )
-
-        # Detect eyes
-        detected_eyes = eye_cascade.detectMultiScale(
-            enlarged,
-            scaleFactor=1.05,
-            minNeighbors=5,
-            minSize=(34, 34),
-            maxSize=(120, 80)
-        )
-
-        # Sort from left to right
-        detected_eyes = sorted(
-            detected_eyes,
-            key=lambda e: e[0]
-        )
-
-        # Keep at most two eye detections
-        detected_eyes = detected_eyes[:2]
-
-        for (ex, ey, ew, eh) in detected_eyes:
-
-            # Convert enlarged coordinates
-            # back to original image coordinates
-
-            original_x = (
-                x +
-                int(ex / scale)
+            confidence = float(
+                detection[14]
             )
 
-            original_y = (
-                y +
-                int(ey / scale)
+            if confidence < 0.6:
+                continue
+
+            faces_detected += 1
+
+            # --------------------------------
+            # Face bounding box
+            # --------------------------------
+
+            x = int(detection[0])
+            y = int(detection[1])
+            w = int(detection[2])
+            h = int(detection[3])
+
+            # Keep inside image
+            x = max(0, x)
+            y = max(0, y)
+
+            w = min(
+                w,
+                width - x
             )
 
-            original_w = int(
-                ew / scale
+            h = min(
+                h,
+                height - y
             )
 
-            original_h = int(
-                eh / scale
-            )
-
-            # Draw blue eye box
             cv2.rectangle(
                 image,
-                (
-                    original_x,
-                    original_y
-                ),
-                (
-                    original_x +
-                    original_w,
-                    original_y +
-                    original_h
-                ),
+                (x, y),
+                (x + w, y + h),
+                (0, 255, 0),
+                2
+            )
+
+            # --------------------------------
+            # YuNet eye landmarks
+            #
+            # detection:
+            #
+            # 0-3   face box
+            # 4     confidence
+            # 5-6   right eye
+            # 7-8   left eye
+            # 9-10  nose
+            # 11-12 right mouth
+            # 13-14 left mouth
+            # --------------------------------
+
+            right_eye_x = int(
+                detection[5]
+            )
+
+            right_eye_y = int(
+                detection[6]
+            )
+
+            left_eye_x = int(
+                detection[7]
+            )
+
+            left_eye_y = int(
+                detection[8]
+            )
+
+            # Eye box dimensions relative
+            # to detected face size
+            eye_width = max(
+                12,
+                int(w * 0.16)
+            )
+
+            eye_height = max(
+                8,
+                int(h * 0.10)
+            )
+
+            half_w = eye_width // 2
+            half_h = eye_height // 2
+
+            # --------------------------------
+            # Right eye box
+            # --------------------------------
+
+            rx1 = max(
+                0,
+                right_eye_x - half_w
+            )
+
+            ry1 = max(
+                0,
+                right_eye_y - half_h
+            )
+
+            rx2 = min(
+                width,
+                right_eye_x + half_w
+            )
+
+            ry2 = min(
+                height,
+                right_eye_y + half_h
+            )
+
+            cv2.rectangle(
+                image,
+                (rx1, ry1),
+                (rx2, ry2),
                 (255, 0, 0),
                 2
             )
 
-            eyes_detected += 1
+            # --------------------------------
+            # Left eye box
+            # --------------------------------
+
+            lx1 = max(
+                0,
+                left_eye_x - half_w
+            )
+
+            ly1 = max(
+                0,
+                left_eye_y - half_h
+            )
+
+            lx2 = min(
+                width,
+                left_eye_x + half_w
+            )
+
+            ly2 = min(
+                height,
+                left_eye_y + half_h
+            )
+
+            cv2.rectangle(
+                image,
+                (lx1, ly1),
+                (lx2, ly2),
+                (255, 0, 0),
+                2
+            )
+
+            eyes_detected += 2
 
     encoded_image = image_to_base64(
         image
@@ -201,19 +259,13 @@ def analyze():
     if encoded_image is None:
 
         return jsonify({
-            "error": "Could not encode processed image"
+            "error": "Could not encode image"
         }), 500
 
     return jsonify({
-
-        "faces_detected":
-            faces_detected,
-
-        "eyes_detected":
-            eyes_detected,
-
-        "image":
-            encoded_image
+        "faces_detected": faces_detected,
+        "eyes_detected": eyes_detected,
+        "image": encoded_image
     })
 
 
