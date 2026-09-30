@@ -1,0 +1,175 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenCV Image Analyzer</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            margin: 0;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: auto;
+            background: white;
+            padding: 35px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .upload-box {
+            border: 2px dashed #aaa;
+            padding: 35px;
+            text-align: center;
+            border-radius: 10px;
+            margin-bottom: 25px;
+        }
+
+        input[type="file"] {
+            margin: 15px;
+        }
+
+        button {
+            background: #111827;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 7px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        #result {
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        #result img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .count {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 15px;
+        }
+
+        .error {
+            color: #d32f2f;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>OpenCV Image Analyzer</h1>
+
+    <p class="subtitle">
+        Upload an image and detect faces using OpenCV
+    </p>
+
+    <div class="upload-box">
+
+        <input
+            type="file"
+            id="imageInput"
+            accept="image/*"
+        >
+
+        <br>
+
+        <button onclick="analyzeImage()">
+            Analyze Image
+        </button>
+
+    </div>
+
+    <div id="result"></div>
+
+</div>
+
+<script>
+
+async function analyzeImage() {
+
+    const input = document.getElementById("imageInput");
+    const result = document.getElementById("result");
+
+    if (!input.files.length) {
+        result.innerHTML =
+            '<p class="error">Please select an image first.</p>';
+        return;
+    }
+
+    const formData = new FormData();
+
+    formData.append("image", input.files[0]);
+
+    result.innerHTML = "<p>Processing image...</p>";
+
+    try {
+
+        const response = await fetch(
+            "/api/analyze",
+            {
+                method: "POST",
+                body: formData
+            }
+        );
+
+        const data = await response.json();
+
+        if (data.error) {
+            result.innerHTML =
+                '<p class="error">' + data.error + '</p>';
+            return;
+        }
+
+        result.innerHTML = `
+            <div class="count">
+                Faces detected: ${data.faces_detected}
+            </div>
+
+            <img src="data:image/png;base64,${data.image}">
+        `;
+
+    } catch (error) {
+
+        result.innerHTML = `
+            <p class="error">
+                Could not connect to the OpenCV server.
+            </p>
+        `;
+
+    }
+
+}
+
+</script>
+
+</body>
+</html>
