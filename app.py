@@ -3,16 +3,17 @@ from flask_cors import CORS
 import cv2
 import numpy as np
 import base64
-from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)
 
-BASE_DIR = Path(__file__).resolve().parent
-
+# Load OpenCV's built-in face cascade
 face_cascade = cv2.CascadeClassifier(
-    str(BASE_DIR / "haarcascade_frontalface_default.xml")
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
+
+if face_cascade.empty():
+    raise RuntimeError("OpenCV face cascade could not be loaded")
 
 
 def image_to_base64(image):
@@ -35,6 +36,7 @@ def home():
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
 
+    # Check uploaded file
     if "image" not in request.files:
         return jsonify({
             "error": "No image uploaded"
@@ -42,6 +44,7 @@ def analyze():
 
     file = request.files["image"]
 
+    # Read image
     image_bytes = file.read()
 
     image_array = np.frombuffer(
@@ -59,11 +62,13 @@ def analyze():
             "error": "Could not read image"
         }), 400
 
+    # Convert to grayscale
     gray = cv2.cvtColor(
         image,
         cv2.COLOR_BGR2GRAY
     )
 
+    # Detect faces
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.1,
@@ -84,7 +89,13 @@ def analyze():
             2
         )
 
+    # Convert processed image to Base64
     encoded_image = image_to_base64(image)
+
+    if encoded_image is None:
+        return jsonify({
+            "error": "Could not encode processed image"
+        }), 500
 
     return jsonify({
         "faces_detected": faces_detected,
