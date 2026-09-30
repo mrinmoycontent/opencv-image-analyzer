@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import cv2
 import numpy as np
@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --------------------------------------------------
-# YuNet model
+# Paths
 # --------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -17,6 +17,11 @@ BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = str(
     BASE_DIR / "face_detection_yunet_2023mar.onnx"
 )
+
+
+# --------------------------------------------------
+# YuNet Face Detector
+# --------------------------------------------------
 
 face_detector = cv2.FaceDetectorYN.create(
     MODEL_PATH,
@@ -53,20 +58,20 @@ def image_to_base64(image):
 
 
 # --------------------------------------------------
-# Home
+# Frontend
 # --------------------------------------------------
 
 @app.route("/")
 def home():
 
-    return jsonify({
-        "status": "running",
-        "message": "OpenCV YuNet Image Analyzer API"
-    })
+    return send_from_directory(
+        BASE_DIR / "public",
+        "index.html"
+    )
 
 
 # --------------------------------------------------
-# Analyze image
+# Analyze Image
 # --------------------------------------------------
 
 @app.route("/api/analyze", methods=["POST"])
@@ -100,13 +105,13 @@ def analyze():
 
     height, width = image.shape[:2]
 
-    # --------------------------------------------------
-    # Tell YuNet the actual image size
-    # --------------------------------------------------
+    # Set actual image size for YuNet
 
     face_detector.setInputSize(
         (width, height)
     )
+
+    # Detect faces
 
     _, detections = face_detector.detect(
         image
@@ -116,15 +121,14 @@ def analyze():
     eyes_detected = 0
 
     # --------------------------------------------------
-    # Process detected faces
+    # Process detections
     # --------------------------------------------------
 
     if detections is not None:
 
         for detection in detections:
 
-            # --------------------------------------------------
-            # YuNet output format:
+            # YuNet output:
             #
             # 0  = face X
             # 1  = face Y
@@ -147,7 +151,6 @@ def analyze():
             # 13 = left mouth Y
             #
             # 14 = confidence
-            # --------------------------------------------------
 
             confidence = float(
                 detection[14]
@@ -159,15 +162,13 @@ def analyze():
             faces_detected += 1
 
             # --------------------------------------------------
-            # Face bounding box
+            # Face box
             # --------------------------------------------------
 
             x = int(detection[0])
             y = int(detection[1])
             w = int(detection[2])
             h = int(detection[3])
-
-            # Keep coordinates inside image
 
             x = max(
                 0,
@@ -188,8 +189,6 @@ def analyze():
                 h,
                 height - y
             )
-
-            # Draw face box
 
             cv2.rectangle(
                 image,
@@ -237,7 +236,7 @@ def analyze():
             half_height = eye_height // 2
 
             # --------------------------------------------------
-            # Right eye
+            # Right eye box
             # --------------------------------------------------
 
             rx1 = max(
@@ -269,7 +268,7 @@ def analyze():
             )
 
             # --------------------------------------------------
-            # Left eye
+            # Left eye box
             # --------------------------------------------------
 
             lx1 = max(
@@ -328,7 +327,7 @@ def analyze():
 
 
 # --------------------------------------------------
-# Start Flask
+# Local Flask Server
 # --------------------------------------------------
 
 if __name__ == "__main__":
