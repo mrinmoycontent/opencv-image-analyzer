@@ -45,10 +45,6 @@
             font-size: 15px;
         }
 
-        button:hover {
-            opacity: 0.85;
-        }
-
         #preview {
             max-width: 100%;
             margin-top: 20px;
@@ -73,41 +69,11 @@
         }
     </style>
 
-    <!-- MediaPipe Face Landmarker -->
-    <script type="module">
-        import {
-            FaceLandmarker,
-            FilesetResolver
-        } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm";
-
-        window.initializeFaceLandmarker = async function () {
-
-            const vision = await FilesetResolver.forVisionTasks(
-                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
-            );
-
-            window.faceLandmarker =
-                await FaceLandmarker.createFromOptions(
-                    vision,
-                    {
-                        baseOptions: {
-                            modelAssetPath:
-                                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-                            delegate: "GPU"
-                        },
-
-                        runningMode: "IMAGE",
-
-                        numFaces: 10,
-
-                        minFaceDetectionConfidence: 0.3,
-                        minFacePresenceConfidence: 0.3,
-                        minTrackingConfidence: 0.3
-                    }
-                );
-
-            console.log("Face Landmarker ready");
-        };
+    <!-- Official MediaPipe Tasks Vision browser bundle -->
+    <script
+        type="module"
+        src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs"
+        crossorigin="anonymous">
     </script>
 </head>
 
@@ -131,48 +97,186 @@
 
         <br><br>
 
-        <button onclick="analyzeImage()">
+        <button id="analyzeButton">
             Analyze Image
         </button>
 
     </div>
 
-    <div class="loading" id="loading">
+    <div
+        class="loading"
+        id="loading">
         Analyzing image...
     </div>
 
-    <div class="error" id="error"></div>
+    <div
+        class="error"
+        id="error">
+    </div>
 
-    <div class="stats" id="stats"></div>
+    <div
+        class="stats"
+        id="stats">
+    </div>
 
     <img
         id="preview"
         style="display:none;"
+        alt="Analyzed image"
     >
 
 </div>
 
+<script type="module">
 
-<script>
+const {
+    FaceLandmarker,
+    FilesetResolver
+} = await import(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs"
+);
 
+let faceLandmarker = null;
+
+
+/*
+ * Initialize MediaPipe Face Landmarker
+ */
+async function initializeFaceLandmarker() {
+
+    const vision =
+        await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+        );
+
+    faceLandmarker =
+        await FaceLandmarker.createFromOptions(
+            vision,
+            {
+                baseOptions: {
+                    modelAssetPath:
+                        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+                },
+
+                runningMode: "IMAGE",
+
+                numFaces: 10,
+
+                minFaceDetectionConfidence: 0.3,
+
+                minFacePresenceConfidence: 0.3,
+
+                minTrackingConfidence: 0.3
+            }
+        );
+
+    console.log(
+        "MediaPipe Face Landmarker ready"
+    );
+}
+
+
+/*
+ * Find the bounding box for
+ * a group of landmarks.
+ */
+function getEyeBox(
+    landmarks,
+    indexes,
+    width,
+    height
+) {
+
+    const points = indexes.map(
+        index => {
+
+            const landmark =
+                landmarks[index];
+
+            return {
+                x: landmark.x * width,
+                y: landmark.y * height
+            };
+        }
+    );
+
+    const xs =
+        points.map(point => point.x);
+
+    const ys =
+        points.map(point => point.y);
+
+    let minX =
+        Math.min(...xs);
+
+    let maxX =
+        Math.max(...xs);
+
+    let minY =
+        Math.min(...ys);
+
+    let maxY =
+        Math.max(...ys);
+
+    const paddingX =
+        Math.max(
+            8,
+            (maxX - minX) * 0.8
+        );
+
+    const paddingY =
+        Math.max(
+            6,
+            (maxY - minY) * 1.2
+        );
+
+    minX -= paddingX;
+    maxX += paddingX;
+
+    minY -= paddingY;
+    maxY += paddingY;
+
+    return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY
+    };
+}
+
+
+/*
+ * Analyze image
+ */
 async function analyzeImage() {
 
     const input =
-        document.getElementById("imageInput");
+        document.getElementById(
+            "imageInput"
+        );
 
     const error =
-        document.getElementById("error");
+        document.getElementById(
+            "error"
+        );
 
     const loading =
-        document.getElementById("loading");
+        document.getElementById(
+            "loading"
+        );
 
     const stats =
-        document.getElementById("stats");
+        document.getElementById(
+            "stats"
+        );
 
     const preview =
-        document.getElementById("preview");
+        document.getElementById(
+            "preview"
+        );
 
     error.textContent = "";
+
     stats.innerHTML = "";
 
     if (!input.files.length) {
@@ -183,16 +287,24 @@ async function analyzeImage() {
         return;
     }
 
-    loading.style.display = "block";
+    if (!faceLandmarker) {
+
+        error.textContent =
+            "Face detection model is still loading. Please wait a moment and try again.";
+
+        return;
+    }
+
+    loading.style.display =
+        "block";
 
     try {
 
         /*
-         * Send image to Flask/OpenCV.
-         * OpenCV detects the faces.
+         * Send image to OpenCV backend.
          */
-
-        const formData = new FormData();
+        const formData =
+            new FormData();
 
         formData.append(
             "image",
@@ -225,21 +337,19 @@ async function analyzeImage() {
             );
         }
 
-        /*
-         * Create an image from the original upload.
-         */
 
+        /*
+         * Load original image.
+         */
         const image =
             new Image();
 
-        image.onload = async function () {
-
-            /*
-             * Create canvas.
-             */
+        image.onload = function () {
 
             const canvas =
-                document.createElement("canvas");
+                document.createElement(
+                    "canvas"
+                );
 
             canvas.width =
                 image.naturalWidth;
@@ -248,165 +358,121 @@ async function analyzeImage() {
                 image.naturalHeight;
 
             const ctx =
-                canvas.getContext("2d");
+                canvas.getContext(
+                    "2d"
+                );
 
+            /*
+             * Draw original image.
+             */
             ctx.drawImage(
                 image,
                 0,
                 0
             );
 
+
             /*
-             * Run MediaPipe Face Landmarker.
+             * Run Face Landmarker.
              */
-
-            if (!window.faceLandmarker) {
-
-                throw new Error(
-                    "Face Landmarker is still loading. Please try again."
-                );
-            }
-
-            const results =
-                window.faceLandmarker.detect(
+            const result =
+                faceLandmarker.detect(
                     image
                 );
 
             let eyesDetected = 0;
 
+
             /*
-             * MediaPipe eye landmark groups.
+             * Official MediaPipe eye
+             * landmark groups.
              *
-             * Left eye:
-             * 33, 133, 159, 145
-             *
-             * Right eye:
-             * 362, 263, 386, 374
+             * These are landmark points
+             * around the actual eye contours.
              */
+            const leftEyeIndexes = [
+                33,
+                133,
+                159,
+                145
+            ];
 
-            const leftEye =
-                [33, 133, 159, 145];
+            const rightEyeIndexes = [
+                362,
+                263,
+                386,
+                374
+            ];
 
-            const rightEye =
-                [362, 263, 386, 374];
 
-            const drawEye =
-                function(points) {
+            if (
+                result.faceLandmarks &&
+                result.faceLandmarks.length > 0
+            ) {
 
-                    const coords =
-                        points.map(
-                            index => {
+                for (
+                    const landmarks
+                    of result.faceLandmarks
+                ) {
 
-                                const landmark =
-                                    results.faceLandmarks
-                                        .flatMap(
-                                            face => face
-                                        )[index];
-
-                                return {
-                                    x:
-                                        landmark.x *
-                                        canvas.width,
-
-                                    y:
-                                        landmark.y *
-                                        canvas.height
-                                };
-                            }
+                    /*
+                     * Left eye
+                     */
+                    const leftBox =
+                        getEyeBox(
+                            landmarks,
+                            leftEyeIndexes,
+                            canvas.width,
+                            canvas.height
                         );
 
-                    const xs =
-                        coords.map(
-                            p => p.x
+                    /*
+                     * Right eye
+                     */
+                    const rightBox =
+                        getEyeBox(
+                            landmarks,
+                            rightEyeIndexes,
+                            canvas.width,
+                            canvas.height
                         );
 
-                    const ys =
-                        coords.map(
-                            p => p.y
-                        );
 
-                    let minX =
-                        Math.min(...xs);
-
-                    let maxX =
-                        Math.max(...xs);
-
-                    let minY =
-                        Math.min(...ys);
-
-                    let maxY =
-                        Math.max(...ys);
-
-                    const paddingX =
-                        Math.max(
-                            8,
-                            (maxX - minX) * 0.8
-                        );
-
-                    const paddingY =
-                        Math.max(
-                            6,
-                            (maxY - minY) * 1.2
-                        );
-
-                    minX -= paddingX;
-                    maxX += paddingX;
-
-                    minY -= paddingY;
-                    maxY += paddingY;
-
+                    /*
+                     * Draw left eye box
+                     */
                     ctx.strokeStyle =
                         "#0066ff";
 
                     ctx.lineWidth = 3;
 
                     ctx.strokeRect(
-                        minX,
-                        minY,
-                        maxX - minX,
-                        maxY - minY
+                        leftBox.x,
+                        leftBox.y,
+                        leftBox.width,
+                        leftBox.height
                     );
 
-                    eyesDetected++;
-                };
+
+                    /*
+                     * Draw right eye box
+                     */
+                    ctx.strokeRect(
+                        rightBox.x,
+                        rightBox.y,
+                        rightBox.width,
+                        rightBox.height
+                    );
 
 
-            /*
-             * Draw two eye boxes
-             * for every detected face.
-             */
-
-            if (
-                results.faceLandmarks &&
-                results.faceLandmarks.length
-            ) {
-
-                results.faceLandmarks.forEach(
-                    face => {
-
-                        /*
-                         * Draw left eye.
-                         */
-
-                        drawEye(
-                            leftEye
-                        );
-
-                        /*
-                         * Draw right eye.
-                         */
-
-                        drawEye(
-                            rightEye
-                        );
-                    }
-                );
+                    eyesDetected += 2;
+                }
             }
 
-            /*
-             * Convert canvas to image.
-             */
 
+            /*
+             * Show final image.
+             */
             preview.src =
                 canvas.toDataURL(
                     "image/jpeg",
@@ -416,6 +482,10 @@ async function analyzeImage() {
             preview.style.display =
                 "block";
 
+
+            /*
+             * Statistics.
+             */
             stats.innerHTML = `
                 <strong>Faces detected:</strong>
                 ${data.faces_detected}
@@ -427,6 +497,16 @@ async function analyzeImage() {
             loading.style.display =
                 "none";
         };
+
+
+        image.onerror =
+            function() {
+
+                throw new Error(
+                    "Could not load image."
+                );
+            };
+
 
         image.src =
             URL.createObjectURL(
@@ -448,32 +528,41 @@ async function analyzeImage() {
 
 
 /*
- * Load MediaPipe as soon as
- * the page is ready.
+ * Button
  */
+document
+    .getElementById(
+        "analyzeButton"
+    )
+    .addEventListener(
+        "click",
+        analyzeImage
+    );
 
-window.addEventListener(
-    "load",
-    async function() {
 
-        try {
+/*
+ * Initialize model.
+ */
+try {
 
-            await window.initializeFaceLandmarker();
+    await initializeFaceLandmarker();
 
-        } catch (error) {
+    console.log(
+        "Face detection model loaded successfully."
+    );
 
-            console.error(
-                "MediaPipe initialization failed:",
-                error
-            );
+} catch (error) {
 
-            document.getElementById(
-                "error"
-            ).textContent =
-                "Face detection model could not be loaded.";
-        }
-    }
-);
+    console.error(
+        "MediaPipe initialization failed:",
+        error
+    );
+
+    document.getElementById(
+        "error"
+    ).textContent =
+        "Face detection model could not be loaded. Check the browser console for details.";
+}
 
 </script>
 
