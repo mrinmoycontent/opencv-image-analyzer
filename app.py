@@ -3,27 +3,31 @@ import cv2
 import numpy as np
 import base64
 from pathlib import Path
+import mediapipe as mp
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).parent
 PUBLIC_DIR = BASE_DIR / "public"
 
-# Load cascade files from the project folder
+# OpenCV face detector
 face_cascade = cv2.CascadeClassifier(
     str(BASE_DIR / "haarcascade_frontalface_default.xml")
 )
 
-eye_cascade = cv2.CascadeClassifier(
-    str(BASE_DIR / "haarcascade_eye.xml")
-)
-
-# Check that cascade files loaded correctly
 if face_cascade.empty():
     raise RuntimeError("Face cascade file could not be loaded")
 
-if eye_cascade.empty():
-    raise RuntimeError("Eye cascade file could not be loaded")
+
+# MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=True,
+    max_num_faces=10,
+    refine_landmarks=True,
+    min_detection_confidence=0.5
+)
 
 
 @app.route("/")
@@ -52,13 +56,15 @@ def analyze():
     if image is None:
         return jsonify({"error": "Invalid image"}), 400
 
-    # Convert image to grayscale
+    # --------------------------------------------------
+    # FACE DETECTION
+    # --------------------------------------------------
+
     gray = cv2.cvtColor(
         image,
         cv2.COLOR_BGR2GRAY
     )
 
-    # Detect faces
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.1,
@@ -67,47 +73,104 @@ def analyze():
     )
 
     result = image.copy()
-    total_eyes = 0
 
-    # Process each detected face
-    for (x, y, w, h) in faces:
+    # --------------------------------------------------
+    # EYE LANDMARK DETECTION
+    # --------------------------------------------------
 
-        # Draw face rectangle
-        cv2.rectangle(
-            result,
-            (x, y),
-            (x + w, y + h),
-            (0, 255, 0),
-            3
-        )
+    rgb_image = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2RGB
+    )
 
-        # Crop face
-        face_gray = gray[y:y+h, x:x+w]
-        face_color = result[y:y+h, x:x+w]
+    mesh_result = face_mesh.process(rgb_image)
 
-        # Detect eyes
-        eyes = eye_cascade.detectMultiScale(
-            face_gray,
-            scaleFactor=1.1,
-            minNeighbors=8,
-            minSize=(10, 10),
-            maxSize=(w // 2, h // 2)
-        )
+    eyes_detected = 0
 
-        total_eyes += len(eyes)
+    if mesh_result.multi_face_landmarks:
 
-        # Draw eye rectangles
-        for (ex, ey, ew, eh) in eyes:
+        for face_landmarks in mesh_result.multi_face_landmarks:
 
-            cv2.rectangle(
-                face_color,
-                (ex, ey),
-                (ex + ew, ey + eh),
-                (255, 0, 0),
-                2
-            )
+            height, width = image.shape[:2]
 
-    # Convert processed image to PNG
+            # Left eye landmarks
+            left_eye_indices = [
+                33, 133, 159, 145
+            ]
+
+            # Right eye landmarks
+            right_eye_indices = [
+                362, 263, 386, 374
+            ]
+
+            # Draw left eye
+            left_points = []
+
+            for index in left_eye_indices:
+
+                landmark = face_landmarks.landmark[index]
+
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
+
+                left_points.append((x, y))
+
+            if left_points:
+
+                x_values = [p[0] for p in left_points]
+                y_values = [p[1] for p in left_points]
+
+                x1 = max(min(x_values) - 5, 0)
+                y1 = max(min(y_values) - 5, 0)
+                x2 = min(max(x_values) + 5, width - 1)
+                y2 = min(max(y_values) + 5, height - 1)
+
+                cv2.rectangle(
+                    result,
+                    (x1, y1),
+                    (x2, y2),
+                    (255, 0, 0),
+                    2
+                )
+
+                eyes_detected += 1
+
+            # Draw right eye
+            right_points = []
+
+            for index in right_eye_indices:
+
+                landmark = face_landmarks.landmark[index]
+
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
+
+                right_points.append((x, y))
+
+            if right_points:
+
+                x_values = [p[0] for p in right_points]
+                y_values = [p[1] for p in right_points]
+
+                x1 = max(min(x_values) - 5, 0)
+                y1 = max(min(y_values) - 5, 0)
+                x2 = min(max(x_values) + 5, width - 1)
+                y2 = min(max(y_values) + 5, height - 1)
+
+                cv2.rectangle(
+                    result,
+                    (x1, y1),
+                    (x2, y2),
+                    (255, 0, 0),
+                    2
+                )
+
+                eyes_detected += 1
+
+    # --------------------------------------------------
+    # ENCODE RESULT
+    # --------------------------------------------------
+
     success, buffer = cv2.imencode(
         ".png",
         result
@@ -118,13 +181,12 @@ def analyze():
             "error": "Could not process image"
         }), 500
 
-    # Convert image to Base64
     result_base64 = base64.b64encode(
         buffer
     ).decode("utf-8")
 
     return jsonify({
         "faces_detected": len(faces),
-        "eyes_detected": total_eyes,
+        "eyes_detected": eyes_detected,
         "image": result_base64
     })
