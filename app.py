@@ -1,57 +1,48 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import cv2
 import numpy as np
 import base64
 from pathlib import Path
+import mediapipe as mp
 
 app = Flask(__name__)
+CORS(app)
 
-BASE_DIR = Path(__file__).parent
-PUBLIC_DIR = BASE_DIR / "public"
+BASE_DIR = Path(__file__).resolve().parent
 
-# --------------------------------------------------
-# LOAD FACE CASCADE
-# --------------------------------------------------
-
+# Face detector
 face_cascade = cv2.CascadeClassifier(
     str(BASE_DIR / "haarcascade_frontalface_default.xml")
 )
 
-if face_cascade.empty():
-    raise RuntimeError(
-        "Face cascade file could not be loaded"
-    )
+# MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
 
-
-# --------------------------------------------------
-# LOAD EYE CASCADE
-# --------------------------------------------------
-
-eye_cascade = cv2.CascadeClassifier(
-    str(BASE_DIR / "haarcascade_eye.xml")
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=True,
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.3
 )
 
-if eye_cascade.empty():
-    raise RuntimeError(
-        "Eye cascade file could not be loaded"
-    )
 
+def image_to_base64(image):
+    success, buffer = cv2.imencode(".jpg", image)
 
-# --------------------------------------------------
-# HOME PAGE
-# --------------------------------------------------
+    if not success:
+        return None
+
+    return base64.b64encode(buffer).decode("utf-8")
+
 
 @app.route("/")
 def home():
-    return send_from_directory(
-        PUBLIC_DIR,
-        "index.html"
-    )
+    return jsonify({
+        "status": "running",
+        "message": "OpenCV Image Analyzer API"
+    })
 
-
-# --------------------------------------------------
-# IMAGE ANALYSIS
-# --------------------------------------------------
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
@@ -63,224 +54,202 @@ def analyze():
 
     file = request.files["image"]
 
-    image_bytes = np.frombuffer(
-        file.read(),
-        np.uint8
-    )
+    image_bytes = file.read()
+
+    image_array = np.frombuffer(image_bytes, np.uint8)
 
     image = cv2.imdecode(
-        image_bytes,
+        image_array,
         cv2.IMREAD_COLOR
     )
 
     if image is None:
         return jsonify({
-            "error": "Invalid image"
+            "error": "Could not read image"
         }), 400
 
-    # Convert to grayscale
     gray = cv2.cvtColor(
         image,
         cv2.COLOR_BGR2GRAY
     )
 
-    # Detect faces
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.1,
         minNeighbors=5,
-        minSize=(30, 30)
+        minSize=(40, 40)
     )
 
-    result = image.copy()
+    faces_detected = len(faces)
+    eyes_detected = 0
 
-    total_eyes = 0
-
-    # --------------------------------------------------
-    # PROCESS EACH FACE
-    # --------------------------------------------------
-
+    # Draw face boxes
     for (x, y, w, h) in faces:
 
-        # Draw face rectangle
         cv2.rectangle(
-            result,
+            image,
             (x, y),
             (x + w, y + h),
             (0, 255, 0),
-            3
+            2
         )
 
-        # Crop the face
-        face_gray = gray[
-            y:y + h,
-            x:x + w
-        ]
+        # Add padding around face
+        padding = int(0.15 * max(w, h))
 
-        face_color = result[
-            y:y + h,
-            x:x + w
-        ]
+        x1 = max(0, x - padding)
+        y1 = max(0, y - padding)
+        x2 = min(image.shape[1], x + w + padding)
+        y2 = min(image.shape[0], y + h + padding)
 
-        if face_gray.size == 0:
+        face_crop = image[y1:y2, x1:x2]
+
+        if face_crop.size == 0:
             continue
 
-        # --------------------------------------------------
-        # ENLARGE SMALL FACE
-        # --------------------------------------------------
+        # Enlarge small face regions
+        scale = max(2.5, 300 / max(face_crop.shape[:2]))
 
-        scale = 3
-
-        enlarged_face = cv2.resize(
-            face_gray,
+        enlarged = cv2.resize(
+            face_crop,
             None,
             fx=scale,
             fy=scale,
             interpolation=cv2.INTER_CUBIC
         )
 
-        # --------------------------------------------------
-        # EYE DETECTION
-        # --------------------------------------------------
-
-        eyes = eye_cascade.detectMultiScale(
-            enlarged_face,
-            scaleFactor=1.05,
-            minNeighbors=4,
-            minSize=(15, 15),
-            maxSize=(
-                int(enlarged_face.shape[1] * 0.45),
-                int(enlarged_face.shape[0] * 0.35)
-            )
+        rgb_face = cv2.cvtColor(
+            enlarged,
+            cv2.COLOR_BGR2RGB
         )
 
-        # --------------------------------------------------
-        # REMOVE DUPLICATE / OVERLAPPING DETECTIONS
-        # --------------------------------------------------
+        results = face_mesh.process(rgb_face)
 
-        detected_eyes = []
+        if not results.multi_face_landmarks:
+            continue
 
-        for (ex, ey, ew, eh) in eyes:
+        landmarks = results.multi_face_landmarks[0].landmark
+
+        face_width = enlarged.shape[1]
+        face_height = enlarged.shape[0]
+
+        # MediaPipe eye landmark groups
+        left_eye_points = [
+            33, 133, 159, 145
+        ]
+
+        right_eye_points = [
+            362, 263, 386, 374
+        ]
+
+        for eye_points in [
+            left_eye_points,
+            right_eye_points
+        ]:
+
+            points = []
+
+            for index in eye_points:
+
+                landmark = landmarks[index]
+
+                px = int(
+                    landmark.x * face_width
+                )
+
+                py = int(
+                    landmark.y * face_height
+                )
+
+                points.append((px, py))
+
+            if not points:
+                continue
+
+            min_x = min(p[0] for p in points)
+            max_x = max(p[0] for p in points)
+
+            min_y = min(p[1] for p in points)
+            max_y = max(p[1] for p in points)
+
+            # Expand eye box slightly
+            eye_padding_x = max(
+                8,
+                int((max_x - min_x) * 0.7)
+            )
+
+            eye_padding_y = max(
+                6,
+                int((max_y - min_y) * 1.2)
+            )
+
+            min_x -= eye_padding_x
+            max_x += eye_padding_x
+
+            min_y -= eye_padding_y
+            max_y += eye_padding_y
 
             # Convert enlarged coordinates
-            # back to original face coordinates
-            ex = int(ex / scale)
-            ey = int(ey / scale)
-            ew = int(ew / scale)
-            eh = int(eh / scale)
+            # back to original image coordinates
+            original_x1 = int(
+                x1 + min_x / scale
+            )
 
-            # Ignore detections outside face
-            if ex < 0 or ey < 0:
-                continue
+            original_y1 = int(
+                y1 + min_y / scale
+            )
 
-            if ex + ew > w:
-                continue
+            original_x2 = int(
+                x1 + max_x / scale
+            )
 
-            if ey + eh > h:
-                continue
+            original_y2 = int(
+                y1 + max_y / scale
+            )
 
-            # Eye center
-            center_x = ex + ew // 2
-            center_y = ey + eh // 2
+            # Keep coordinates inside image
+            original_x1 = max(
+                0,
+                original_x1
+            )
 
-            # Eyes should normally be in the
-            # upper half of the face
-            if center_y > int(h * 0.65):
-                continue
+            original_y1 = max(
+                0,
+                original_y1
+            )
 
-            # Avoid duplicate detections
-            duplicate = False
+            original_x2 = min(
+                image.shape[1],
+                original_x2
+            )
 
-            for (
-                old_x,
-                old_y,
-                old_w,
-                old_h
-            ) in detected_eyes:
+            original_y2 = min(
+                image.shape[0],
+                original_y2
+            )
 
-                old_center_x = (
-                    old_x + old_w // 2
-                )
-
-                old_center_y = (
-                    old_y + old_h // 2
-                )
-
-                distance_x = abs(
-                    center_x - old_center_x
-                )
-
-                distance_y = abs(
-                    center_y - old_center_y
-                )
-
-                if (
-                    distance_x < max(ew, old_w) * 0.5
-                    and
-                    distance_y < max(eh, old_h) * 0.5
-                ):
-                    duplicate = True
-                    break
-
-            if not duplicate:
-                detected_eyes.append(
-                    (ex, ey, ew, eh)
-                )
-
-        # --------------------------------------------------
-        # KEEP AT MOST TWO EYES
-        # --------------------------------------------------
-
-        detected_eyes = sorted(
-            detected_eyes,
-            key=lambda eye: eye[0]
-        )
-
-        detected_eyes = detected_eyes[:2]
-
-        # --------------------------------------------------
-        # DRAW EYE BOXES
-        # --------------------------------------------------
-
-        for (
-            ex,
-            ey,
-            ew,
-            eh
-        ) in detected_eyes:
-
+            # Draw eye box
             cv2.rectangle(
-                face_color,
-                (ex, ey),
-                (ex + ew, ey + eh),
+                image,
+                (original_x1, original_y1),
+                (original_x2, original_y2),
                 (255, 0, 0),
                 2
             )
 
-        total_eyes += len(
-            detected_eyes
-        )
+            eyes_detected += 1
 
-    # --------------------------------------------------
-    # ENCODE RESULT IMAGE
-    # --------------------------------------------------
-
-    success, buffer = cv2.imencode(
-        ".png",
-        result
-    )
-
-    if not success:
-        return jsonify({
-            "error": "Could not process image"
-        }), 500
-
-    result_base64 = base64.b64encode(
-        buffer
-    ).decode("utf-8")
+    encoded_image = image_to_base64(image)
 
     return jsonify({
-        "faces_detected": len(faces),
-        "eyes_detected": total_eyes,
-        "image": result_base64
+        "faces_detected": faces_detected,
+        "eyes_detected": eyes_detected,
+        "image": encoded_image
     })
+
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=5000
+    )
