@@ -9,7 +9,7 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).parent
 PUBLIC_DIR = BASE_DIR / "public"
 
-# Load cascade files directly from the project
+# Load cascade files from the project folder
 face_cascade = cv2.CascadeClassifier(
     str(BASE_DIR / "haarcascade_frontalface_default.xml")
 )
@@ -18,7 +18,7 @@ eye_cascade = cv2.CascadeClassifier(
     str(BASE_DIR / "haarcascade_eye.xml")
 )
 
-# Make sure the cascade files loaded correctly
+# Check that cascade files loaded correctly
 if face_cascade.empty():
     raise RuntimeError("Face cascade file could not be loaded")
 
@@ -52,11 +52,13 @@ def analyze():
     if image is None:
         return jsonify({"error": "Invalid image"}), 400
 
+    # Convert image to grayscale
     gray = cv2.cvtColor(
         image,
         cv2.COLOR_BGR2GRAY
     )
 
+    # Detect faces
     faces = face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.1,
@@ -67,8 +69,10 @@ def analyze():
     result = image.copy()
     total_eyes = 0
 
+    # Process each detected face
     for (x, y, w, h) in faces:
 
+        # Draw face rectangle
         cv2.rectangle(
             result,
             (x, y),
@@ -77,17 +81,22 @@ def analyze():
             3
         )
 
+        # Crop face
         face_gray = gray[y:y+h, x:x+w]
         face_color = result[y:y+h, x:x+w]
 
+        # Detect eyes
         eyes = eye_cascade.detectMultiScale(
             face_gray,
             scaleFactor=1.1,
-            minNeighbors=5
+            minNeighbors=8,
+            minSize=(10, 10),
+            maxSize=(w // 2, h // 2)
         )
 
         total_eyes += len(eyes)
 
+        # Draw eye rectangles
         for (ex, ey, ew, eh) in eyes:
 
             cv2.rectangle(
@@ -98,6 +107,7 @@ def analyze():
                 2
             )
 
+    # Convert processed image to PNG
     success, buffer = cv2.imencode(
         ".png",
         result
@@ -108,6 +118,7 @@ def analyze():
             "error": "Could not process image"
         }), 500
 
+    # Convert image to Base64
     result_base64 = base64.b64encode(
         buffer
     ).decode("utf-8")
