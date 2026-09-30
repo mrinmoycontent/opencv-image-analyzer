@@ -1,85 +1,114 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>OpenCV Image Analyzer</title>
 
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f4f6f8;
+            background: #f5f7fa;
             margin: 0;
-            padding: 40px;
+            padding: 40px 20px;
         }
 
         .container {
             max-width: 900px;
             margin: auto;
             background: white;
-            padding: 35px;
+            padding: 30px;
             border-radius: 12px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         }
 
         h1 {
-            text-align: center;
-            margin-bottom: 10px;
+            margin-top: 0;
         }
 
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-        }
-
-        .upload-box {
-            border: 2px dashed #aaa;
-            padding: 35px;
+        .upload-area {
+            border: 2px dashed #bbb;
+            padding: 30px;
             text-align: center;
             border-radius: 10px;
-            margin-bottom: 25px;
-        }
-
-        input[type="file"] {
-            margin: 15px;
+            margin: 20px 0;
         }
 
         button {
-            background: #111827;
-            color: white;
+            padding: 12px 24px;
             border: none;
-            padding: 12px 25px;
-            border-radius: 7px;
+            border-radius: 6px;
+            background: #222;
+            color: white;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 15px;
         }
 
         button:hover {
-            opacity: 0.9;
+            opacity: 0.85;
         }
 
-        #result {
-            margin-top: 30px;
-            text-align: center;
-        }
-
-        #result img {
+        #preview {
             max-width: 100%;
-            border-radius: 8px;
             margin-top: 20px;
+            border-radius: 8px;
         }
 
-        .count {
-            font-size: 20px;
-            font-weight: bold;
-            margin-top: 15px;
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f1f3f5;
+            border-radius: 8px;
         }
 
         .error {
-            color: #d32f2f;
+            color: #c62828;
+            margin-top: 15px;
+        }
+
+        .loading {
+            display: none;
             margin-top: 15px;
         }
     </style>
+
+    <!-- MediaPipe Face Landmarker -->
+    <script type="module">
+        import {
+            FaceLandmarker,
+            FilesetResolver
+        } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm";
+
+        window.initializeFaceLandmarker = async function () {
+
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+            );
+
+            window.faceLandmarker =
+                await FaceLandmarker.createFromOptions(
+                    vision,
+                    {
+                        baseOptions: {
+                            modelAssetPath:
+                                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                            delegate: "GPU"
+                        },
+
+                        runningMode: "IMAGE",
+
+                        numFaces: 10,
+
+                        minFaceDetectionConfidence: 0.3,
+                        minFacePresenceConfidence: 0.3,
+                        minTrackingConfidence: 0.3
+                    }
+                );
+
+            console.log("Face Landmarker ready");
+        };
+    </script>
 </head>
 
 <body>
@@ -88,11 +117,11 @@
 
     <h1>OpenCV Image Analyzer</h1>
 
-    <p class="subtitle">
-        Upload an image and detect faces using OpenCV
+    <p>
+        Upload an image to detect faces and eyes.
     </p>
 
-    <div class="upload-box">
+    <div class="upload-area">
 
         <input
             type="file"
@@ -100,7 +129,7 @@
             accept="image/*"
         >
 
-        <br>
+        <br><br>
 
         <button onclick="analyzeImage()">
             Analyze Image
@@ -108,66 +137,343 @@
 
     </div>
 
-    <div id="result"></div>
+    <div class="loading" id="loading">
+        Analyzing image...
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <div class="stats" id="stats"></div>
+
+    <img
+        id="preview"
+        style="display:none;"
+    >
 
 </div>
+
 
 <script>
 
 async function analyzeImage() {
 
-    const input = document.getElementById("imageInput");
-    const result = document.getElementById("result");
+    const input =
+        document.getElementById("imageInput");
+
+    const error =
+        document.getElementById("error");
+
+    const loading =
+        document.getElementById("loading");
+
+    const stats =
+        document.getElementById("stats");
+
+    const preview =
+        document.getElementById("preview");
+
+    error.textContent = "";
+    stats.innerHTML = "";
 
     if (!input.files.length) {
-        result.innerHTML =
-            '<p class="error">Please select an image first.</p>';
+
+        error.textContent =
+            "Please select an image.";
+
         return;
     }
 
-    const formData = new FormData();
-
-    formData.append("image", input.files[0]);
-
-    result.innerHTML = "<p>Processing image...</p>";
+    loading.style.display = "block";
 
     try {
 
-        const response = await fetch(
-            "/api/analyze",
-            {
-                method: "POST",
-                body: formData
-            }
+        /*
+         * Send image to Flask/OpenCV.
+         * OpenCV detects the faces.
+         */
+
+        const formData = new FormData();
+
+        formData.append(
+            "image",
+            input.files[0]
         );
 
-        const data = await response.json();
+        const response =
+            await fetch(
+                "/api/analyze",
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
 
-        if (data.error) {
-            result.innerHTML =
-                '<p class="error">' + data.error + '</p>';
-            return;
+        if (!response.ok) {
+
+            throw new Error(
+                "OpenCV server returned an error."
+            );
         }
 
-        result.innerHTML = `
-            <div class="count">
-                Faces detected: ${data.faces_detected}
-            </div>
+        const data =
+            await response.json();
 
-            <img src="data:image/png;base64,${data.image}">
-        `;
+        if (data.error) {
 
-    } catch (error) {
+            throw new Error(
+                data.error
+            );
+        }
 
-        result.innerHTML = `
-            <p class="error">
-                Could not connect to the OpenCV server.
-            </p>
-        `;
+        /*
+         * Create an image from the original upload.
+         */
 
+        const image =
+            new Image();
+
+        image.onload = async function () {
+
+            /*
+             * Create canvas.
+             */
+
+            const canvas =
+                document.createElement("canvas");
+
+            canvas.width =
+                image.naturalWidth;
+
+            canvas.height =
+                image.naturalHeight;
+
+            const ctx =
+                canvas.getContext("2d");
+
+            ctx.drawImage(
+                image,
+                0,
+                0
+            );
+
+            /*
+             * Run MediaPipe Face Landmarker.
+             */
+
+            if (!window.faceLandmarker) {
+
+                throw new Error(
+                    "Face Landmarker is still loading. Please try again."
+                );
+            }
+
+            const results =
+                window.faceLandmarker.detect(
+                    image
+                );
+
+            let eyesDetected = 0;
+
+            /*
+             * MediaPipe eye landmark groups.
+             *
+             * Left eye:
+             * 33, 133, 159, 145
+             *
+             * Right eye:
+             * 362, 263, 386, 374
+             */
+
+            const leftEye =
+                [33, 133, 159, 145];
+
+            const rightEye =
+                [362, 263, 386, 374];
+
+            const drawEye =
+                function(points) {
+
+                    const coords =
+                        points.map(
+                            index => {
+
+                                const landmark =
+                                    results.faceLandmarks
+                                        .flatMap(
+                                            face => face
+                                        )[index];
+
+                                return {
+                                    x:
+                                        landmark.x *
+                                        canvas.width,
+
+                                    y:
+                                        landmark.y *
+                                        canvas.height
+                                };
+                            }
+                        );
+
+                    const xs =
+                        coords.map(
+                            p => p.x
+                        );
+
+                    const ys =
+                        coords.map(
+                            p => p.y
+                        );
+
+                    let minX =
+                        Math.min(...xs);
+
+                    let maxX =
+                        Math.max(...xs);
+
+                    let minY =
+                        Math.min(...ys);
+
+                    let maxY =
+                        Math.max(...ys);
+
+                    const paddingX =
+                        Math.max(
+                            8,
+                            (maxX - minX) * 0.8
+                        );
+
+                    const paddingY =
+                        Math.max(
+                            6,
+                            (maxY - minY) * 1.2
+                        );
+
+                    minX -= paddingX;
+                    maxX += paddingX;
+
+                    minY -= paddingY;
+                    maxY += paddingY;
+
+                    ctx.strokeStyle =
+                        "#0066ff";
+
+                    ctx.lineWidth = 3;
+
+                    ctx.strokeRect(
+                        minX,
+                        minY,
+                        maxX - minX,
+                        maxY - minY
+                    );
+
+                    eyesDetected++;
+                };
+
+
+            /*
+             * Draw two eye boxes
+             * for every detected face.
+             */
+
+            if (
+                results.faceLandmarks &&
+                results.faceLandmarks.length
+            ) {
+
+                results.faceLandmarks.forEach(
+                    face => {
+
+                        /*
+                         * Draw left eye.
+                         */
+
+                        drawEye(
+                            leftEye
+                        );
+
+                        /*
+                         * Draw right eye.
+                         */
+
+                        drawEye(
+                            rightEye
+                        );
+                    }
+                );
+            }
+
+            /*
+             * Convert canvas to image.
+             */
+
+            preview.src =
+                canvas.toDataURL(
+                    "image/jpeg",
+                    0.92
+                );
+
+            preview.style.display =
+                "block";
+
+            stats.innerHTML = `
+                <strong>Faces detected:</strong>
+                ${data.faces_detected}
+                <br>
+                <strong>Eyes detected:</strong>
+                ${eyesDetected}
+            `;
+
+            loading.style.display =
+                "none";
+        };
+
+        image.src =
+            URL.createObjectURL(
+                input.files[0]
+            );
+
+    } catch (err) {
+
+        console.error(err);
+
+        error.textContent =
+            err.message ||
+            "Could not analyze the image.";
+
+        loading.style.display =
+            "none";
     }
-
 }
+
+
+/*
+ * Load MediaPipe as soon as
+ * the page is ready.
+ */
+
+window.addEventListener(
+    "load",
+    async function() {
+
+        try {
+
+            await window.initializeFaceLandmarker();
+
+        } catch (error) {
+
+            console.error(
+                "MediaPipe initialization failed:",
+                error
+            );
+
+            document.getElementById(
+                "error"
+            ).textContent =
+                "Face detection model could not be loaded.";
+        }
+    }
+);
 
 </script>
 
