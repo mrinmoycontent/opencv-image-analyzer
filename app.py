@@ -6,15 +6,24 @@ from pathlib import Path
 
 app = Flask(__name__)
 
-PUBLIC_DIR = Path(__file__).parent / "public"
+BASE_DIR = Path(__file__).parent
+PUBLIC_DIR = BASE_DIR / "public"
 
+# Load cascade files directly from the project
 face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    str(BASE_DIR / "haarcascade_frontalface_default.xml")
 )
 
 eye_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_eye.xml"
+    str(BASE_DIR / "haarcascade_eye.xml")
 )
+
+# Make sure the cascade files loaded correctly
+if face_cascade.empty():
+    raise RuntimeError("Face cascade file could not be loaded")
+
+if eye_cascade.empty():
+    raise RuntimeError("Eye cascade file could not be loaded")
 
 
 @app.route("/")
