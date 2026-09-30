@@ -102,7 +102,8 @@ def analyze():
         for detection in detections:
 
             confidence = float(
-                detection[14]
+    detection[4]
+)
             )
 
             if confidence < 0.6:
