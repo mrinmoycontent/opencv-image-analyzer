@@ -2,4 +2,3 @@ Flask
 flask-cors
 opencv-contrib-python-headless
 numpy
-mediapipe
