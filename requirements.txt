@@ -1,5 +1,20 @@
 Flask
 flask-cors
-numpy
-mediapipe==0.10.21
+numpy==1.26.4
 opencv-contrib-python-headless==4.11.0.86
+mediapipe==0.10.21 --no-deps
+absl-py
+attrs
+flatbuffers
+jax
+jaxlib
+matplotlib
+protobuf==4.25.8
+sounddevice
+sentencepiece
+scipy
+ml-dtypes
+opt-einsum
+packaging
+pillow
+python-dateutil
