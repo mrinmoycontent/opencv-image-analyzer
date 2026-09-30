@@ -8,13 +8,16 @@ from pathlib import Path
 app = Flask(__name__)
 CORS(app)
 
+# --------------------------------------------------
+# YuNet model
+# --------------------------------------------------
+
 BASE_DIR = Path(__file__).resolve().parent
 
 MODEL_PATH = str(
     BASE_DIR / "face_detection_yunet_2023mar.onnx"
 )
 
-# YuNet face detector
 face_detector = cv2.FaceDetectorYN.create(
     MODEL_PATH,
     "",
@@ -29,6 +32,10 @@ if face_detector is None:
         "YuNet face detector could not be loaded"
     )
 
+
+# --------------------------------------------------
+# Convert image to Base64
+# --------------------------------------------------
 
 def image_to_base64(image):
 
@@ -45,6 +52,10 @@ def image_to_base64(image):
     ).decode("utf-8")
 
 
+# --------------------------------------------------
+# Home
+# --------------------------------------------------
+
 @app.route("/")
 def home():
 
@@ -53,6 +64,10 @@ def home():
         "message": "OpenCV YuNet Image Analyzer API"
     })
 
+
+# --------------------------------------------------
+# Analyze image
+# --------------------------------------------------
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
@@ -85,7 +100,10 @@ def analyze():
 
     height, width = image.shape[:2]
 
+    # --------------------------------------------------
     # Tell YuNet the actual image size
+    # --------------------------------------------------
+
     face_detector.setInputSize(
         (width, height)
     )
@@ -97,13 +115,42 @@ def analyze():
     faces_detected = 0
     eyes_detected = 0
 
+    # --------------------------------------------------
+    # Process detected faces
+    # --------------------------------------------------
+
     if detections is not None:
 
         for detection in detections:
 
+            # --------------------------------------------------
+            # YuNet output format:
+            #
+            # 0  = face X
+            # 1  = face Y
+            # 2  = face width
+            # 3  = face height
+            #
+            # 4  = right eye X
+            # 5  = right eye Y
+            #
+            # 6  = left eye X
+            # 7  = left eye Y
+            #
+            # 8  = nose X
+            # 9  = nose Y
+            #
+            # 10 = right mouth X
+            # 11 = right mouth Y
+            #
+            # 12 = left mouth X
+            # 13 = left mouth Y
+            #
+            # 14 = confidence
+            # --------------------------------------------------
+
             confidence = float(
-    detection[4]
-)
+                detection[14]
             )
 
             if confidence < 0.6:
@@ -111,18 +158,26 @@ def analyze():
 
             faces_detected += 1
 
-            # --------------------------------
+            # --------------------------------------------------
             # Face bounding box
-            # --------------------------------
+            # --------------------------------------------------
 
             x = int(detection[0])
             y = int(detection[1])
             w = int(detection[2])
             h = int(detection[3])
 
-            # Keep inside image
-            x = max(0, x)
-            y = max(0, y)
+            # Keep coordinates inside image
+
+            x = max(
+                0,
+                x
+            )
+
+            y = max(
+                0,
+                y
+            )
 
             w = min(
                 w,
@@ -134,6 +189,8 @@ def analyze():
                 height - y
             )
 
+            # Draw face box
+
             cv2.rectangle(
                 image,
                 (x, y),
@@ -142,41 +199,33 @@ def analyze():
                 2
             )
 
-            # --------------------------------
-            # YuNet eye landmarks
-            #
-            # detection:
-            #
-            # 0-3   face box
-            # 4     confidence
-            # 5-6   right eye
-            # 7-8   left eye
-            # 9-10  nose
-            # 11-12 right mouth
-            # 13-14 left mouth
-            # --------------------------------
+            # --------------------------------------------------
+            # Eye landmarks
+            # --------------------------------------------------
 
             right_eye_x = int(
-                detection[5]
+                detection[4]
             )
 
             right_eye_y = int(
-                detection[6]
+                detection[5]
             )
 
             left_eye_x = int(
-                detection[7]
+                detection[6]
             )
 
             left_eye_y = int(
-                detection[8]
+                detection[7]
             )
 
-            # Eye box dimensions relative
-            # to detected face size
+            # --------------------------------------------------
+            # Eye box size
+            # --------------------------------------------------
+
             eye_width = max(
                 12,
-                int(w * 0.16)
+                int(w * 0.14)
             )
 
             eye_height = max(
@@ -184,31 +233,31 @@ def analyze():
                 int(h * 0.10)
             )
 
-            half_w = eye_width // 2
-            half_h = eye_height // 2
+            half_width = eye_width // 2
+            half_height = eye_height // 2
 
-            # --------------------------------
-            # Right eye box
-            # --------------------------------
+            # --------------------------------------------------
+            # Right eye
+            # --------------------------------------------------
 
             rx1 = max(
                 0,
-                right_eye_x - half_w
+                right_eye_x - half_width
             )
 
             ry1 = max(
                 0,
-                right_eye_y - half_h
+                right_eye_y - half_height
             )
 
             rx2 = min(
-                width,
-                right_eye_x + half_w
+                width - 1,
+                right_eye_x + half_width
             )
 
             ry2 = min(
-                height,
-                right_eye_y + half_h
+                height - 1,
+                right_eye_y + half_height
             )
 
             cv2.rectangle(
@@ -219,28 +268,28 @@ def analyze():
                 2
             )
 
-            # --------------------------------
-            # Left eye box
-            # --------------------------------
+            # --------------------------------------------------
+            # Left eye
+            # --------------------------------------------------
 
             lx1 = max(
                 0,
-                left_eye_x - half_w
+                left_eye_x - half_width
             )
 
             ly1 = max(
                 0,
-                left_eye_y - half_h
+                left_eye_y - half_height
             )
 
             lx2 = min(
-                width,
-                left_eye_x + half_w
+                width - 1,
+                left_eye_x + half_width
             )
 
             ly2 = min(
-                height,
-                left_eye_y + half_h
+                height - 1,
+                left_eye_y + half_height
             )
 
             cv2.rectangle(
@@ -253,6 +302,10 @@ def analyze():
 
             eyes_detected += 2
 
+    # --------------------------------------------------
+    # Encode processed image
+    # --------------------------------------------------
+
     encoded_image = image_to_base64(
         image
     )
@@ -263,12 +316,20 @@ def analyze():
             "error": "Could not encode image"
         }), 500
 
+    # --------------------------------------------------
+    # Return result
+    # --------------------------------------------------
+
     return jsonify({
         "faces_detected": faces_detected,
         "eyes_detected": eyes_detected,
         "image": encoded_image
     })
 
+
+# --------------------------------------------------
+# Start Flask
+# --------------------------------------------------
 
 if __name__ == "__main__":
 
