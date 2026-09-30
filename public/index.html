@@ -1,3 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>OpenCV Image Analyzer</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fa;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow:
+                0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .upload-area {
+            border: 2px dashed #bbb;
+            padding: 30px;
+            text-align: center;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            background: #222;
+            color: white;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        #preview {
+            max-width: 100%;
+            margin-top: 20px;
+            border-radius: 8px;
+        }
+
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f1f3f5;
+            border-radius: 8px;
+        }
+
+        .error {
+            color: #c62828;
+            margin-top: 15px;
+        }
+
+        .loading {
+            display: none;
+            margin-top: 15px;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+    <h1>OpenCV Image Analyzer</h1>
+
+    <p>
+        Upload an image to detect faces and eyes.
+    </p>
+
+
+    <div class="upload-area">
+
+        <input
+            type="file"
+            id="imageInput"
+            accept="image/*,.avif"
+        >
+
+        <br>
+        <br>
+
+        <button
+            onclick="analyzeImage()"
+        >
+            Analyze Image
+        </button>
+
+    </div>
+
+
+    <div
+        class="loading"
+        id="loading"
+    >
+        Analyzing image...
+    </div>
+
+
+    <div
+        class="error"
+        id="error"
+    ></div>
+
+
+    <div
+        class="stats"
+        id="stats"
+    ></div>
+
+
+    <img
+        id="preview"
+        style="display:none;"
+        alt="Analyzed image"
+    >
+
+</div>
+
+
 <script>
 
 async function analyzeImage() {
@@ -17,8 +164,13 @@ async function analyzeImage() {
     const preview =
         document.getElementById("preview");
 
+
     error.textContent = "";
+
     stats.innerHTML = "";
+
+    preview.style.display = "none";
+
 
     if (!input.files.length) {
 
@@ -28,64 +180,143 @@ async function analyzeImage() {
         return;
     }
 
-    loading.style.display = "block";
+
+    loading.style.display =
+        "block";
+
 
     try {
 
-        const originalFile = input.files[0];
+        const originalFile =
+            input.files[0];
+
 
         /*
-         * Convert AVIF/WebP/etc. to JPEG in the browser.
-         * This prevents OpenCV from having to decode AVIF.
+         * Convert the selected image
+         * to JPEG in the browser.
          */
 
-        const imageBitmap =
-            await createImageBitmap(originalFile);
+        let imageBlob;
 
-        const canvas =
-            document.createElement("canvas");
 
-        canvas.width =
-            imageBitmap.width;
+        if (
+            originalFile.type ===
+            "image/jpeg"
+            ||
+            originalFile.type ===
+            "image/png"
+        ) {
 
-        canvas.height =
-            imageBitmap.height;
+            imageBlob =
+                originalFile;
 
-        const context =
-            canvas.getContext("2d");
+        } else {
 
-        context.drawImage(
-            imageBitmap,
-            0,
-            0
-        );
+            /*
+             * For AVIF, WebP and other
+             * browser-supported formats,
+             * use an Image element.
+             */
 
-        const jpegBlob =
-            await new Promise((resolve) => {
+            const image =
+                new Image();
 
-                canvas.toBlob(
-                    resolve,
-                    "image/jpeg",
-                    0.95
+
+            const objectUrl =
+                URL.createObjectURL(
+                    originalFile
                 );
 
-            });
 
-        if (!jpegBlob) {
+            await new Promise(
+                (resolve, reject) => {
 
-            throw new Error(
-                "Could not convert image."
+                    image.onload =
+                        resolve;
+
+                    image.onerror =
+                        () => reject(
+                            new Error(
+                                "This image format cannot be opened by your browser."
+                            )
+                        );
+
+                    image.src =
+                        objectUrl;
+
+                }
             );
+
+
+            const canvas =
+                document.createElement(
+                    "canvas"
+                );
+
+
+            canvas.width =
+                image.naturalWidth;
+
+            canvas.height =
+                image.naturalHeight;
+
+
+            const context =
+                canvas.getContext(
+                    "2d"
+                );
+
+
+            context.drawImage(
+                image,
+                0,
+                0
+            );
+
+
+            imageBlob =
+                await new Promise(
+                    (resolve) => {
+
+                        canvas.toBlob(
+                            resolve,
+                            "image/jpeg",
+                            0.95
+                        );
+
+                    }
+                );
+
+
+            URL.revokeObjectURL(
+                objectUrl
+            );
+
+
+            if (!imageBlob) {
+
+                throw new Error(
+                    "Could not convert the image."
+                );
+            }
+
         }
+
+
+        /*
+         * Send JPEG image to Flask.
+         */
 
         const formData =
             new FormData();
 
+
         formData.append(
             "image",
-            jpegBlob,
-            "converted-image.jpg"
+            imageBlob,
+            "image.jpg"
         );
+
 
         const response =
             await fetch(
@@ -96,31 +327,60 @@ async function analyzeImage() {
                 }
             );
 
+
         const data =
             await response.json();
 
-        if (!response.ok || data.error) {
+
+        if (
+            !response.ok
+            ||
+            data.error
+        ) {
 
             throw new Error(
                 data.error ||
                 "OpenCV server returned an error."
             );
+
         }
+
+
+        /*
+         * Display processed image.
+         */
 
         preview.src =
             "data:image/jpeg;base64," +
             data.image;
 
+
         preview.style.display =
             "block";
 
+
+        /*
+         * Display detection results.
+         */
+
         stats.innerHTML = `
-            <strong>Faces detected:</strong>
+
+            <strong>
+                Faces detected:
+            </strong>
+
             ${data.faces_detected}
+
             <br>
-            <strong>Eyes detected:</strong>
+
+            <strong>
+                Eyes detected:
+            </strong>
+
             ${data.eyes_detected}
+
         `;
+
 
     } catch (err) {
 
@@ -134,7 +394,13 @@ async function analyzeImage() {
 
         loading.style.display =
             "none";
+
     }
+
 }
 
 </script>
+
+</body>
+
+</html>
